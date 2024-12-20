@@ -192,7 +192,7 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		username := r.URL.Query().Get("username")
 		data := PageData{
-			Title:    "GitHub Repository Cloner",
+			Title:    "Start your journey with Containerization",
 			Username: username,
 		}
 		if username != "" {
