@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const GITHUB_REPO = "git@github.com:XiaoMi/ha_xiaomi_home.git"
+const GITHUB_REPO = "git@github.com:dharshan-kumarj/Cratoss.git"
 
 type PageData struct {
 	Title     string
@@ -83,20 +83,30 @@ const htmlTemplate = `
 
             const statusHeader = document.getElementById('status-header');
             statusHeader.style.display = 'block';
-            statusHeader.textContent = 'Initializing clone...';
+            statusHeader.textContent = 'Checking workspace...';
 
-            // Start SSE connection
-            const eventSource = new EventSource('/stream?username=' + username);
-            
-            eventSource.onmessage = function(event) {
-                statusHeader.textContent = event.data;
-                if (event.data.includes('Clone completed')) {
-                    eventSource.close();
-                    window.location.href = '/workspace?username=' + username;
-                }
-            };
+            // First check if workspace exists
+            fetch('/check-workspace?username=' + username)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.exists) {
+                        // If workspace exists, redirect to it
+                        window.location.href = '/workspace?username=' + username;
+                    } else {
+                        // If workspace doesn't exist, start cloning
+                        const eventSource = new EventSource('/stream?username=' + username);
+                        
+                        eventSource.onmessage = function(event) {
+                            statusHeader.textContent = event.data;
+                            if (event.data.includes('Clone completed')) {
+                                eventSource.close();
+                                window.location.href = '/workspace?username=' + username;
+                            }
+                        };
 
-            document.getElementById('cloneForm').submit();
+                        document.getElementById('cloneForm').submit();
+                    }
+                });
         }
     </script>
 </head>
@@ -130,6 +140,27 @@ const htmlTemplate = `
 
 func main() {
 	tmpl := template.Must(template.New("index").Parse(htmlTemplate))
+
+	// New handler to check if workspace exists
+	http.HandleFunc("/check-workspace", func(w http.ResponseWriter, r *http.Request) {
+		username := r.URL.Query().Get("username")
+		if username == "" {
+			http.Error(w, "Username is required", http.StatusBadRequest)
+			return
+		}
+
+		workspacePath := username
+		exists := false
+		if _, err := os.Stat(workspacePath); err == nil {
+			// Check if it's a git repository
+			if _, err := os.Stat(workspacePath + "/.git"); err == nil {
+				exists = true
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"exists": %v}`, exists)
+	})
 
 	// Handle streaming updates
 	http.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +196,7 @@ func main() {
 			Username: username,
 		}
 		if username != "" {
-			data.Workspace = username // Direct username path
+			data.Workspace = username
 		}
 		tmpl.Execute(w, data)
 	})
@@ -183,14 +214,24 @@ func main() {
 			return
 		}
 
-		// Create directory with just username
 		workspacePath := username
+
+		// Check if directory already exists and is a git repository
+		if _, err := os.Stat(workspacePath); err == nil {
+			if _, err := os.Stat(workspacePath + "/.git"); err == nil {
+				// Directory exists and is a git repository, redirect to workspace
+				http.Redirect(w, r, fmt.Sprintf("/workspace?username=%s", username), http.StatusSeeOther)
+				return
+			}
+		}
+
+		// Create directory with username
 		if err := os.MkdirAll(workspacePath, 0755); err != nil {
 			handleError(w, tmpl, "Failed to create workspace", err)
 			return
 		}
 
-		// Clone directly into username directory
+		// Clone repository
 		cmd := exec.Command("git", "clone", GITHUB_REPO, workspacePath)
 		if err := cmd.Run(); err != nil {
 			handleError(w, tmpl, "Failed to clone repository", err)
@@ -207,7 +248,7 @@ func main() {
 		data := PageData{
 			Title:     "GitHub Repository Cloner",
 			Username:  username,
-			Workspace: username, // Direct username path
+			Workspace: username,
 		}
 		tmpl.Execute(w, data)
 	})
@@ -220,7 +261,7 @@ func main() {
 		}
 
 		username := r.FormValue("username")
-		workspacePath := username // Direct username path
+		workspacePath := username
 
 		cmd := exec.Command("code", workspacePath)
 		if err := cmd.Run(); err != nil {
